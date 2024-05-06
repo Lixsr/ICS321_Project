@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>User Form</title>
+</head>
+<body>
+    <!-- iframe + target="votar" are used to prevent reloading the page. -->
+    <iframe name="votar" style="display:none;"></iframe>
+    <form action="http://localhost:3306/submit" method="post" target="votar">
+        <label for="Id">User ID:</label>
+        <input type="text" id="Id" name="Id"><br><br>
+        <label for="name">Name:</label>
+        <input type="text" id="name" name="name"><br><br>
+        <input type="submit" value="Submit">
+    </form>
+    <button id="insertBtn">insert</button>
+    <script src="script.js"></script>
+</body>
+</html>

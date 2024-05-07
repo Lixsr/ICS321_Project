@@ -3,6 +3,7 @@ insertBtn = document.getElementById('insertBtn');
 insertBtn.addEventListener('click', () => {
     const id = document.getElementById('Id').value.trim();
     const name = document.getElementById('name').value.trim();
+    const query = `INSERT INTO Customer (ID, Name) VALUES (${id}, "${name}");`;
     
     const xhr = new XMLHttpRequest();
     xhr.open('POST', 'http://localhost:3306/submit', true);
@@ -17,7 +18,6 @@ insertBtn.addEventListener('click', () => {
             }
         }
     };
-
-    const data = JSON.stringify({ Id: id, name: name });
+    const data = JSON.stringify({ Query: query });
     xhr.send(data);
 });

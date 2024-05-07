@@ -34,10 +34,11 @@ app.get('/', (req, res) => {
 
 // to insert the data using form/button. //
 app.post('/submit', (req, res) => {
-  const { Id, name } = req.body;
-  const sql = 'INSERT INTO Customer (ID, Name) VALUES (?, ?)';
-  
-  connection.query(sql, [Id, name], (err, result) => {
+
+  // Query must match that same identifier that was given though script.js//
+  // Query != query //
+  const { Query } = req.body;  
+  connection.query(Query, (err, result) => {
     if (err) console.log(err);
     res.send('Data inserted successfully');
   });

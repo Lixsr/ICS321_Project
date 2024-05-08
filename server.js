@@ -33,7 +33,7 @@ app.get('/', (req, res) => {
 });
 
 // to insert the data using form/button. //
-app.post('/submit', (req, res) => {
+app.post('/insert', (req, res) => {
 
   // Query must match that same identifier that was given though script.js//
   // Query != query //
@@ -43,6 +43,22 @@ app.post('/submit', (req, res) => {
     res.send('Data inserted successfully');
   });
 });
+
+app.post('/select', (req, res) => {
+
+  // Query must match that same identifier that was given though script.js//
+  // Query != query //
+  const { Query } = req.body;  
+  connection.query(Query, (err, result) => {
+    if (err) {
+      console.log(err);
+      res.status(500).send('Error executing query');
+    } else {
+      res.send(result);
+    }
+  });
+});
+
 
 // Listen to coming requests. //
 app.listen(port, () => {

@@ -1,0 +1,106 @@
+body{
+    background-color: lightgray;
+    
+    .my-background{
+        border-radius: 16px;
+        background-color: white;
+        padding: 1rem;
+        margin: 1rem auto;
+    }
+}
+
+/* nav */
+#logout{
+    border: none;
+    margin-left: 5%;
+    padding: 8px 32px;
+    background: inherit;
+    transition: background-color .2s linear, color .2s linear;
+    
+}
+#logout:hover{
+    background-color: hsl(0, 0%, 8%);
+    color: hsl(0, 0%, 90%);
+}
+#logout-nav{
+    padding: 0px;
+}
+/* nav */
+/* insert Ticket */
+#manipulation-container{
+    display: flex;
+    flex-direction: row;
+}
+@media (max-width:1200px) {
+    #manipulation-container{
+        flex-wrap: wrap;
+    }
+}
+.container .mb-3{
+    margin: 36px;
+    padding: 0px 16px;
+}
+
+.mb-3 label{
+    font-size: 1.4rem;
+    margin-left: 8px;
+}
+.btn.btn-secondary{
+    font-size: 1.2rem;
+    margin-top: 1.5rem;
+}
+
+/* insert Ticket */
+
+/* User Payment */
+
+@media (min-width: 1200px) {
+    .user-payment{
+        display: flex;
+        flex-direction: row;
+    }
+}
+
+/* User Payment */
+
+
+body{
+    background-color: whitesmoke;
+}
+
+
+
+
+
+
+
+
+
+
+
+.bookTicket{
+    width: 60%;
+}
+.availableTickets{
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    height: 400px;
+    overflow: auto;
+}
+
+#bookingForm{
+    text-align: center;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-around;
+    input{
+        width: 80%;
+    }
+}
+#bookingForm section{
+    width: 45%;
+    height: 300px;
+    border: 2px solid;
+}
+

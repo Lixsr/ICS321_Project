@@ -1,0 +1,61 @@
+
+/* generate reports btn */
+#admin-reports_btn{
+    border: none;
+    margin-left: 5%;
+    margin: 0px 0px 0px 1rem;
+    padding: 0.8rem !important ;
+
+    transition: background-color .2s linear, color .2s linear;
+    width: 100%;
+    max-width: 100px;
+}
+#admin-reports_btn:hover{
+    background-color: hsl(0, 0%, 15%);
+    color: hsl(0, 0%, 90%);
+}
+/* generate reports btn */
+
+/* reports containers */
+#admin-reports_container{
+    display: flex;
+    justify-content: space-evenly;
+    flex-wrap: wrap;
+    width: 95%;
+    h1{
+        font-size: 1.5rem;
+    }
+}
+/* @media (max-width: 800px) {
+    #admin-reports_container{
+        flex-direction: column;
+    }
+} */
+
+
+#admin-reports_container .container{
+    width: 300px;
+    margin: 1.5rem;
+}
+
+/* contains all 6 reports */
+.report{
+    padding: .5rem;
+    border-radius: 8px;
+    background-color: hsl(0, 0%, 75%);
+    max-height: 50svh;
+    overflow-y: auto;
+}
+
+.active-flight, .payment, .cancelled-ticket, .flight-pcg, .waitlisted{
+    margin: .5rem 0;
+    border-radius: 8px;
+    padding: 8px;
+    background-color: hsl(0, 0%, 90%);
+    font-size: 1.5rem;
+    width: 100%;
+}
+.payment p, .cancelled-ticket p, .flight-pcg p, .waitlisted p{
+    font-size: 1.2rem;
+    margin: 0px;
+}

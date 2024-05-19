@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from supabase import create_client, Client
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any
 from datetime import date
 from dotenv import load_dotenv
 from datetime import date, datetime, timedelta
@@ -12,23 +12,10 @@ import jwt
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-# Allow all origins (not recommended for production)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5500"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
-)
-
 
 import os
 load_dotenv()
-#app = FastAPI()
+app = FastAPI()
 
 # Initialize Supabase client
 url: str = os.environ.get("SUPABASE_URL")
@@ -43,7 +30,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 def generate_secret():
     return secrets.token_hex(16)
 
-SECRET_KEY = generate_secret()
+SECRET_KEY = "generate_secret()"
 ALGORITHM = "HS256"
 
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
@@ -56,20 +43,20 @@ class Ticket(BaseModel):
     flight_number: str
     payment_id: int
     passenger_id: Optional[str] = None
-    date_of_booking: Optional[date] = None
+    date_of_booking: Optional[str] = None
     status: str
 
 class Flight(BaseModel):
     flight_number: str
     departure_city: str
     destination_city: str
-    date: date
+    date: str
     time: str
 
 class Payment(BaseModel):
     payment_id: int
     amount: float
-    date: date
+    date: str
     method: str
 
 class User(BaseModel):
@@ -91,7 +78,7 @@ class Maintenance(BaseModel):
     plane_id: str
     employee_id: str
     maintenance_type: str
-    maintenance_date: date
+    maintenance_date: str
 
 
 
@@ -170,16 +157,34 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     return encoded_jwt
 
 
+def find_available_seat(flight_number: str):
+    query = """
+    SELECT s.seat_number
+    FROM seat s
+    LEFT JOIN ticket t ON s.seat_number = t.seat_number AND s.flight_id = t.flight_number AND t.status NOT IN ('active', 'waitlist')
+    WHERE s.flight_id = :flight_number AND t.seat_number IS NULL
+    LIMIT 1;
+    """
+
+    try:
+        response = supabase.rpc("query", {"query": query, "flight_number": flight_number}).execute()
+        return response.data[0]["seat_number"]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+
+
 # Passenger functions
 @app.post("/passenger/ticket", response_model=Ticket)
 async def add_ticket(ticket: Ticket, user: User = Depends(require_roles(["Passenger"]))):
     if ticket.passenger_id != user.ssn:
         raise HTTPException(status_code=403, detail="You do not have permission to add a ticket for another passenger")
     ticket_data = ticket.model_dump(exclude={"ticket_id"})
-    response = supabase.table("ticket").insert(ticket_data).execute()
-    if response.status_code != 201:
-        raise HTTPException(status_code=400, detail="Error adding ticket")
-    send_email(user.email, "Ticket Booked", f"Your ticket for flight {ticket.flight_number} has been booked successfully, waiting for confirmation")
+    try:
+        response = supabase.table("ticket").insert(ticket_data).execute()
+        send_email(user.email, "Ticket Booked", f"Ticket for flight {ticket.flight_number} has been booked successfully")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     return response.data[0]
 
 @app.delete("/passenger/ticket/{ticket_id}")
@@ -189,13 +194,15 @@ async def remove_ticket(ticket_id: int, user: User = Depends(require_roles(["Pas
     if not ticket_data.data:
         raise HTTPException(status_code=403, detail="You do not have permission to remove this ticket")
 
-    response = supabase.table("ticket").update({"status": "removed"}).eq("ticket_id", ticket_id).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error removing ticket")
+
+    try:
+        response = supabase.table("ticket").update({"status": "removed"}).eq("ticket_id", ticket_id).execute()
+        flight_number = ticket_data.data[0]["flight_number"]
+        send_email(user.email, "Ticket Cancelled", f"Your ticket for flight {flight_number} has been cancelled")
+        return {"message": "Ticket removed"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     
-    flight_number = ticket_data.data[0]["flight_number"]
-    send_email(user.email, "Ticket Cancelled", f"Your ticket for flight {flight_number} has been cancelled")
-    return {"message": "Ticket removed"}
 
 @app.put("/passenger/ticket/{ticket_id}", response_model=Ticket)
 async def edit_ticket(ticket_id: int, ticket: Ticket, user: User = Depends(require_roles(["Passenger"]))):
@@ -204,11 +211,13 @@ async def edit_ticket(ticket_id: int, ticket: Ticket, user: User = Depends(requi
     if not ticket_data.data:
         raise HTTPException(status_code=403, detail="You do not have permission to edit this ticket")
 
-    response = supabase.table("ticket").update(ticket.model_dump()).eq("ticket_id", ticket_id).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error editing ticket")
 
-    send_email(user.email, "Ticket Updated", f"Your ticket for flight {ticket.flight_number} has been updated")
+    try:
+        response = supabase.table("ticket").update(ticket.model_dump()).eq("ticket_id", ticket_id).execute()
+        send_email(user.email, "Ticket Updated", f"Your ticket for flight {ticket.flight_number} has been updated")
+    except:
+        raise HTTPException(status_code=400, detail=e.message)
+
     return response.data[0]
 
 
@@ -222,256 +231,283 @@ async def search_flights(departure_city: str, destination_city: str, travel_date
         raise HTTPException(status_code=400, detail="Departure and destination cities are required")
     if not travel_date:
         raise HTTPException(status_code=400, detail="Travel date is required")
-    response = supabase.table("flight").select("*").eq("departure_city", departure_city).eq("destination_city", destination_city).eq("date", travel_date).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error searching flights")
+    try:
+        response = supabase.table("flight").select("*").eq("departure_city", departure_city).eq("destination_city", destination_city).eq("date", travel_date).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
     return response.data
 
 @app.post("/passenger/book_seat", response_model=Ticket)
 async def book_seat(ticket: Ticket, user: User = Depends(require_roles(["Passenger"]))):
-    # Check if the seat is already booked
-    existing_ticket_response = supabase.table("ticket").select("*").eq("seat_number", ticket.seat_number).eq("flight_number", ticket.flight_number).eq("status", "active").execute()
-    if existing_ticket_response.data:
-        raise HTTPException(status_code=400, detail="Seat already booked")
 
-    # Check if the passenger has already booked 10 seats for this flight
-    passenger_tickets_response = supabase.table("ticket").select("*").eq("passenger_id", ticket.passenger_id).eq("flight_number", ticket.flight_number).execute()
-    if len(passenger_tickets_response.data) >= 10:
-        raise HTTPException(status_code=400, detail="Passenger cannot book more than 10 seats on a flight")
+    try:
 
-    response = supabase.table("ticket").insert(ticket.model_dump()).execute()
-    if response.status_code != 201:
-        raise HTTPException(status_code=400, detail="Error booking seat")
+        response = supabase.table("ticket").insert(ticket.model_dump()).execute()
     
-    send_email(user.email, "Seat Booked", f"Your seat {ticket.seat_number} for flight {ticket.flight_number} has been booked successfully")
+        send_email(user.email, "Seat Booked", f"Your seat {ticket.seat_number} for flight {ticket.flight_number} has been booked successfully")
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     return response.data[0]
 
 @app.post("/passenger/payment", response_model=Payment)
 async def do_payment(payment: Payment, user: User = Depends(require_roles(["Passenger"]))):
     payment_data = payment.model_dump(exclude={"payment_id"})
-    response = supabase.table("payment").insert(payment_data).execute()
-    if response.status_code != 201:
-        raise HTTPException(status_code=400, detail="Error processing payment")
+    try:
+        response = supabase.table("payment").insert(payment_data).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     return response.data[0]
 
 # Admin functions
 @app.post("/admin/ticket", response_model=Ticket)
 async def add_ticket_admin(ticket: Ticket, user: User = Depends(require_roles(["Admin"]))):
     ticket_data = ticket.model_dump(exclude={"ticket_id"})
-    response = supabase.table("ticket").insert(ticket_data).execute()
-    if response.status_code != 201:
-        raise HTTPException(status_code=400, detail="Error adding ticket")
-    send_email(user.email, "Ticket Booked", f"Ticket for flight {ticket.flight_number} has been booked successfully")
+    try:
+        response = supabase.table("ticket").insert(ticket_data).execute()
+        send_email(user.email, "Ticket Booked", f"Ticket for flight {ticket.flight_number} has been booked successfully")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     return response.data[0]
 
 @app.delete("/admin/ticket/{ticket_id}")
 async def remove_ticket_admin(ticket_id: int, user: User = Depends(require_roles(["Admin"]))):
+    
+    try:
+        response = supabase.table("ticket").update({"status": "removed"}).eq("ticket_id", ticket_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
-    response = supabase.table("ticket").update({"status": "removed"}).eq("ticket_id", ticket_id).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error removing ticket")
     send_email(user.email, "Ticket Cancelled", f"Ticket for flight {ticket_id} has been cancelled")
 
     return {"message": "Ticket removed"}
 
 @app.put("/admin/ticket/{ticket_id}", response_model=Ticket)
 async def edit_ticket_admin(ticket_id: int, ticket: Ticket, user: User = Depends(require_roles(["Admin"]))):
-    response = supabase.table("ticket").update(ticket.model_dump()).eq("ticket_id", ticket_id).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error editing ticket")
+    try:
+        response = supabase.table("ticket").update(ticket.model_dump()).eq("ticket_id", ticket_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     send_email(user.email, "Ticket Updated", f"Ticket for flight {ticket.flight_number} has been updated")
     return response.data[0]
 
 @app.put("/admin/promote_waitlisted/{ticket_id}")
 async def promote_waitlisted(ticket_id: str, user: User = Depends(require_roles(["Admin"]))):
     # Update the status of the ticket to active
-    response = supabase.table("ticket").update({"status": "active"}).eq("ticket_id", ticket_id).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error promoting passenger")
+    try:
+        response = supabase.table("ticket").update({"status": "active"}).eq("ticket_id", ticket_id).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     
     # Get the passenger's email
-    passenger_data = supabase.table("passenger").select("*").eq("ssn", response.data[0]["passenger_id"]).execute()
-    if not passenger_data.data:
-        raise HTTPException(status_code=400, detail="Error fetching passenger data")
+    try:
+        passenger_data = supabase.table("passenger").select("*").eq("ssn", response.data[0]["passenger_id"]).execute()
+    except Exception as e:
+
+        raise HTTPException(status_code=400, detail=e.message)
     send_email(passenger_data.data[0]["email"], "Ticket Confirmed", f"Your ticket for flight {response.data[0]['flight_number']} has been confirmed")
     return {"message": "Passenger promoted"}
 
 @app.get("/admin/reports/active_flights", response_model=List[Flight])
 async def active_flights(user: User = Depends(require_roles(["Admin"]))):
-    response = supabase.table("flight").select("*").eq("date", date.today()).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error fetching active flights")
+    try:
+        response = supabase.table("flight").select("*").eq("date", date.today()).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
     return response.data
+
 
 @app.get("/admin/reports/booking_percentage")
 async def booking_percentage(flight_date: date, user: User = Depends(require_roles(["Admin"]))):
-    query = """
-    SELECT
-        f.flight_number,
-        COALESCE(SUM(ast.number_of_seats), 0) AS total_seats,
-        COUNT(t.ticket_id) AS booked_seats,
-        CASE
-            WHEN COALESCE(SUM(ast.number_of_seats), 0) = 0 THEN 0
-            ELSE (COUNT(t.ticket_id)::float / COALESCE(SUM(ast.number_of_seats), 0)) * 100
-        END AS booking_percentage
-    FROM
-        flight f
-        JOIN plane p ON f.plane_id = p.registration_number
-        JOIN aircraft_seatstype ast ON p.aircraft_id = ast.aircraft_id
-        LEFT JOIN ticket t ON f.flight_number = t.flight_number AND t.status = 'active'
-    WHERE
-        f.date = :flight_date
-    GROUP BY
-        f.flight_number;
-    """
-    
-    response = supabase.rpc("query", {"query": query, "flight_date": flight_date}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching booking percentages")
-    
-    return response.data
+    try:
+        # Fetch flights on the given date
+        flights_response = supabase.table("flight").select("flight_number, plane_id").eq("date", flight_date).execute()
 
-@app.get("/admin/reports/payments", response_model=List[Payment])
+        flights_data = flights_response.data
+        booking_percentages = []
+
+        for flight in flights_data:
+            flight_number = flight["flight_number"]
+            plane_id = flight["plane_id"]
+
+            # Fetch total seats for the plane
+            plane_response = supabase.table("plane").select("aircraft_id").eq("registration_number", plane_id).single().execute()
+        
+            aircraft_id = plane_response.data["aircraft_id"]
+            seats_response = supabase.table("aircraft_seatstype").select("number_of_seats").eq("aircraft_id", aircraft_id).execute()
+
+            total_seats = sum(seat["number_of_seats"] for seat in seats_response.data)
+
+            # Fetch booked seats for the flight
+            tickets_response = supabase.table("ticket").select("ticket_id").eq("flight_number", flight_number).eq("status", "active").execute()
+            booked_seats = len(tickets_response.data)
+
+            # Calculate booking percentage
+            booking_percentage = (booked_seats / total_seats) * 100 if total_seats > 0 else 0
+            booking_percentages.append({
+                "flight_number": flight_number,
+                "total_seats": total_seats,
+                "booked_seats": booked_seats,
+                "booking_percentage": booking_percentage
+            })
+
+        return booking_percentages
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+@app.get("/admin/reports/payments", response_model=List[dict[str, Any]])
 async def confirmed_payments(user: User = Depends(require_roles(["Admin"]))):
-    query = """
-    SELECT
-        p.payment_id,
-        p.amount,
-        p.date,
-        p.method
-    FROM
-        payment p
-        JOIN ticket t ON p.payment_id = t.payment_id
-    WHERE
-        t.status = 'confirmed';
-    """
-    
-    response = supabase.rpc("query", {"query": query}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching confirmed payments")
-    
-    return response.data
+    try:
+        # Fetch confirmed tickets
+        tickets_response = supabase.table("ticket").select("payment_id").eq("status", "confirmed").execute()
+
+        payment_ids = [ticket["payment_id"] for ticket in tickets_response.data]
+        
+        if not payment_ids:
+            return []
+        
+        # Fetch payments related to the confirmed tickets
+        payments_response = supabase.table("payment").select("*").in_("payment_id", payment_ids).execute()
+
+
+        return payments_response.data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
 
 @app.get("/admin/reports/waitlisted_passengers")
 async def waitlisted_passengers(flight_number: str, user: User = Depends(require_roles(["Admin"]))):
-    # Query the database to get waitlisted passengers for the specified flight
-    query = """
-    SELECT person.ssn, person.first_name, person.father_name, person.family, person.email, person.phone
-    FROM ticket
-    JOIN passenger ON ticket.passenger_id = passenger.ssn
-    JOIN person ON passenger.ssn = person.ssn
-    WHERE ticket.flight_number = :flight_number AND ticket.status = 'waitlisted';
-    """
-    
-    response = supabase.rpc("query", {"query": query, "flight_number": flight_number}).execute()
-    
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error fetching waitlisted passengers")
-    
-    return response.data
+    try:
+        # Fetch waitlisted tickets for the specified flight
+        tickets_response = supabase.table("ticket").select("passenger_id").eq("flight_number", flight_number).eq("status", "waitlisted").execute()
+   
+        passenger_ids = [ticket["passenger_id"] for ticket in tickets_response.data]
+        
+        if not passenger_ids:
+            return []
+        
+        # Fetch passengers related to the waitlisted tickets
+        passengers_response = supabase.table("passenger").select("ssn").in_("ssn", passenger_ids).execute()
+
+        passenger_ssns = [passenger["ssn"] for passenger in passengers_response.data]
+        
+        # Fetch person details related to the passengers
+        persons_response = supabase.table("person").select("ssn, first_name, father_name, family, email, phone").in_("ssn", passenger_ssns).execute()
+
+        return persons_response.data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 @app.get("/admin/reports/load_factor")
 async def average_load_factor(flight_date: date, user: User = Depends(require_roles(["Admin"]))):
-    query = """
-    SELECT
-        p.registration_number,
-        COALESCE(seat_counts.total_seats, 0) AS total_seats,
-        COALESCE(booked_counts.booked_seats, 0) AS booked_seats,
-        CASE
-            WHEN COALESCE(seat_counts.total_seats, 0) = 0 THEN 0
-            ELSE (COALESCE(booked_counts.booked_seats, 0)::float / COALESCE(seat_counts.total_seats, 0)) * 100
-        END AS load_factor
-    FROM
-        plane p
-        LEFT JOIN (
-            SELECT
-                p.registration_number,
-                SUM(ast.number_of_seats) AS total_seats
-            FROM
-                plane p
-                JOIN aircraft_seatstype ast ON p.aircraft_id = ast.aircraft_id
-            GROUP BY
-                p.registration_number
-        ) AS seat_counts ON p.registration_number = seat_counts.registration_number
-        LEFT JOIN (
-            SELECT
-                f.plane_id AS registration_number,
-                COUNT(t.ticket_id) AS booked_seats
-            FROM
-                flight f
-                LEFT JOIN ticket t ON f.flight_number = t.flight_number AND t.status = 'active'
-            WHERE
-                f.date = :flight_date
-            GROUP BY
-                f.plane_id
-        ) AS booked_counts ON p.registration_number = booked_counts.registration_number;
-    """
-    
-    response = supabase.rpc("query", {"query": query, "flight_date": flight_date}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching load factors")
-    
-    return response.data
+    try:
+        # Fetch total seats for each plane
+        planes_response = supabase.table("plane").select("registration_number, aircraft_id").execute()
 
+        seat_counts = {}
+        planes_data = planes_response.data
+        for plane in planes_data:
+            plane_id = plane["registration_number"]
+            aircraft_id = plane["aircraft_id"]
+            seats_response = supabase.table("aircraft_seatstype").select("number_of_seats").eq("aircraft_id", aircraft_id).execute()
+            if seats_response.data:
+                seat_counts[plane_id] = sum(seat["number_of_seats"] for seat in seats_response.data)
+            else:
+                seat_counts[plane_id] = 0
 
+        # Fetch booked seats for each plane on the given date
+        flights_response = supabase.table("flight").select("plane_id, flight_number").eq("date", flight_date).execute()
+
+        booked_counts = {}
+        flights_data = flights_response.data
+        for flight in flights_data:
+            plane_id = flight["plane_id"]
+            flight_number = flight["flight_number"]
+            tickets_response = supabase.table("ticket").select("ticket_id").eq("flight_number", flight_number).eq("status", "active").execute()
+            if tickets_response.data:
+                booked_counts[plane_id] = len(tickets_response.data)
+            else:
+                booked_counts[plane_id] = 0
+
+        # Combine results and calculate load factor
+        load_factors = []
+        for plane_id in seat_counts:
+            total_seats = seat_counts[plane_id]
+            booked_seats = booked_counts.get(plane_id, 0)
+            load_factor = (booked_seats / total_seats) * 100 if total_seats > 0 else 0
+            load_factors.append({
+                "registration_number": plane_id,
+                "total_seats": total_seats,
+                "booked_seats": booked_seats,
+                "load_factor": load_factor
+            })
+
+        return load_factors
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 
 @app.get("/admin/reports/ticket_cancelled")
 async def cancelled_tickets(user: User = Depends(require_roles(["Admin"]))):
-    query = """
-    SELECT
-        t.ticket_id,
-        t.seat_number,
-        t.flight_number,
-        t.payment_id,
-        t.passenger_id,
-        p.first_name,
-        p.father_name,
-        p.family,
-        p.email,
-        p.phone
-    FROM
+    try:
+        # Fetch cancelled tickets
+        tickets_response = supabase.table("ticket").select("ticket_id, seat_number, flight_number, payment_id, passenger_id").eq("status", "cancelled").execute()
+        if tickets_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Error fetching cancelled tickets")
+        
+        cancelled_tickets = tickets_response.data
+        
+        if not cancelled_tickets:
+            return []
+        
+        passenger_ids = [ticket["passenger_id"] for ticket in cancelled_tickets]
+        
+        # Fetch passengers related to the cancelled tickets
+        passengers_response = supabase.table("passenger").select("ssn").in_("ssn", passenger_ids).execute()
+        if passengers_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Error fetching passengers")
+        
+        passenger_ssns = [passenger["ssn"] for passenger in passengers_response.data]
+        
+        # Fetch person details related to the passengers
+        persons_response = supabase.table("person").select("ssn, first_name, father_name, family, email, phone").in_("ssn", passenger_ssns).execute()
+        if persons_response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Error fetching persons")
+        
+        persons = {person["ssn"]: person for person in persons_response.data}
+        
+        # Combine ticket and person details
+        for ticket in cancelled_tickets:
+            passenger_id = ticket["passenger_id"]
+            if passenger_id in persons:
+                ticket.update(persons[passenger_id])
+        
+        return cancelled_tickets
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        ticket t
-        JOIN passenger p ON t.passenger_id = p.ssn
-    WHERE
-        t.status = 'cancelled';
-    """
-    response = supabase.rpc("query", {"query": query}).execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error fetching cancelled tickets")
-
-    return response.data
 
 
 @app.get("/admin/reports/changes_by_admin", response_model=List[AdminChanges])
 async def changes_by_admin(user: User = Depends(require_roles(["Admin"]))):
-    query = """
-    SELECT
-        m.ssn AS admin_ssn,
-        COUNT(*) AS changes_count
-    FROM
-        manage m
-    GROUP BY
-        m.ssn;
-    """
-
-    response = supabase.rpc("query", {"query": query}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching changes by admin")
-    
-    return response.data
+    try:
+        # Fetch changes by admin
+        changes_response = supabase.table("manage").select("ssn, count(*) as changes_count").group("ssn").execute()
+        if not changes_response.data:
+            raise HTTPException(status_code=400, detail="Error fetching changes by admin")
+        
+        return changes_response.data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/maintenance", response_model=Maintenance)
 async def create_maintenance(maintenance: Maintenance, user: User = Depends(require_roles(["Employee", "Admin"]))):
     maintenance_data = maintenance.model_dump()
-    response = supabase.table("maintenance").insert(maintenance_data).execute()
-    if response.status_code != 201:
-        raise HTTPException(status_code=400, detail="Error creating maintenance record")
+    try:
+        response = supabase.table("maintenance").insert(maintenance_data).execute()
+    except Exception as e:
+         raise HTTPException(status_code=400, detail=e.message)
     return response.data[0]
 
 @app.get("/maintenance", response_model=List[Maintenance])
@@ -481,81 +517,68 @@ async def get_maintenance(plane_id: Optional[str] = None, employee_id: Optional[
         query = query.eq("plane_id", plane_id)
     if employee_id:
         query = query.eq("employee_id", employee_id)
-    response = query.execute()
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Error fetching maintenance records")
+    try:
+        response = query.execute()
+    except Exception as e:
+         raise HTTPException(status_code=400, detail=e.message)
     return response.data
-
 
 @app.get("/maintenance/last", response_model=List[Maintenance])
 async def get_last_maintenance(user: User = Depends(require_roles(["Employee", "Admin"]))):
-    query = """
-    -- Query to fetch the last maintenance in the past
-    SELECT
-        m1.plane_id,
-        m1.maintenance_id,
-        m1.employee_id,
-        m1.maintenance_type,
-        m1.maintenance_date,
-        m1.notes
-    FROM
-        maintenance m1
-        JOIN (
-            SELECT
-                plane_id,
-                MAX(maintenance_date) AS max_date
-            FROM
-                maintenance
-            WHERE
-                maintenance_date <= CURRENT_DATE
-            GROUP BY
-                plane_id
-        ) m2 ON m1.plane_id = m2.plane_id AND m1.maintenance_date = m2.max_date
-    """
-    
-    response = supabase.rpc("query", {"query": query}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching maintenance records")
-    
-    return response.data
+    try:
+        # Fetch the last maintenance records for each plane
+        last_maintenance_response = supabase.table("maintenance").select(
+            "plane_id, maintenance_id, employee_id, maintenance_type, maintenance_date, notes"
+        ).order("maintenance_date", desc=True).execute()
+        
 
+        last_maintenance_data = last_maintenance_response.data
+        last_maintenance_records = {}
+        
+        for record in last_maintenance_data:
+            plane_id = record["plane_id"]
+            if plane_id not in last_maintenance_records:
+                last_maintenance_records[plane_id] = record
+        
+        return list(last_maintenance_records.values())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=e.message)
 
 @app.get("/maintenance/next", response_model=List[Maintenance])
 async def get_next_maintenance(user: User = Depends(require_roles(["Employee", "Admin"]))):
-    query = """
-    SELECT
-        m.plane_id,
-        m.maintenance_id,
-        m.employee_id,
-        m.maintenance_type,
-        m.maintenance_date,
-        m.notes
-    FROM
-        maintenance m
-    WHERE
-        m.maintenance_date > CURRENT_DATE;
-    """
-    
-    response = supabase.rpc("query", {"query": query}).execute()
-    
-    if response.status_code != 200 or not response.data:
-        raise HTTPException(status_code=400, detail="Error fetching next maintenance records")
-    
-    return response.data
+    try:
+        # Fetch the next maintenance records
+        next_maintenance_response = supabase.table("maintenance").select(
+            "plane_id, maintenance_id, employee_id, maintenance_type, maintenance_date, notes"
+        ).gt("maintenance_date", datetime.utcnow().date()).execute()
+
+        return next_maintenance_response.data
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/available_seats/{flight_number}", response_model=List[str])
+async def get_available_seats(flight_number: str):
+    try:
+        response = supabase.rpc("get_available_seats", {"flight_": flight_number}).execute()
+    except Exception as e:
+
+        raise HTTPException(status_code=400, detail=e.message)
+    return [seat["seat_number"] for seat in response.data]
+
 
 # General functions
 @app.post("/token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # Add your logic to authenticate the user and return a token
-    auth_response = supabase.auth.sign_in_with_password({
-        "email": form_data.username,
-        "password": form_data.password
-    })
-    if auth_response["user"] is not None:
-        return {"access_token": auth_response["access_token"], "token_type": "bearer"}
+    auth_response = supabase.table("person").select("*").eq("username", form_data.username).eq("password", form_data.password).execute()
+    if auth_response.data:
+        user = auth_response.data[0]
+        access_token = create_access_token(data={"sub": user["ssn"]})
+        return {"access_token": access_token, "token_type": "bearer"}
     else:
-        raise HTTPException(status_code=400, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
 
 # Endpoint to handle logout
 @app.post("/logout")
@@ -565,4 +588,4 @@ async def logout(user: User = Depends(get_current_user), token: str = Depends(oa
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app=app)
+    uvicorn.run(app="main:app", reload=True)

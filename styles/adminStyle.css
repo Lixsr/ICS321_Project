@@ -47,7 +47,7 @@
     overflow-y: auto;
 }
 
-.active-flight, .payment, .cancelled-ticket, .flight-pcg, .waitlisted{
+.active-flight, .payment, .cancelled-ticket, .flight-pcg, .waitlisted, .load-factor{
     margin: .5rem 0;
     border-radius: 8px;
     padding: 8px;
@@ -55,7 +55,7 @@
     font-size: 1.5rem;
     width: 100%;
 }
-.payment p, .cancelled-ticket p, .flight-pcg p, .waitlisted p{
+.payment p, .cancelled-ticket p, .flight-pcg p, .waitlisted p, .load-factor p{
     font-size: 1.2rem;
     margin: 0px;
 }

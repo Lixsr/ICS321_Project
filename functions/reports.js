@@ -8,11 +8,48 @@ reportsBtn.addEventListener('click', () => {
     activeFlights();
     payments();
     cancelledTickets();
+    getLoadFactor();
+
 });
 
 
 
+function getLoadFactor(){
+    const loadFactorDiv = document.getElementById('load-factor_container');
+    
+    const query = `SELECT p.registration_number, COALESCE(SUM(ast.number_of_seats), 0) AS total_seats,
+                    COALESCE(SUM(CASE WHEN t.status = 'active' THEN 1 ELSE 0 END), 0) AS booked_seats 
+                    FROM plane p LEFT JOIN flight f ON p.registration_number = f.plane_id 
+                    LEFT JOIN ticket t ON f.flight_number = t.flight_number LEFT JOIN 
+                    aircraft_seatstype ast ON p.aircraft_id = ast.aircraft_id 
+                    GROUP BY p.registration_number;`;
+    fetch('http://localhost:3306/select', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ Query: query }),
+    })
+        .then(response => response.json())
+        .then(data => {
+            loadFactorDiv.innerHTML = "";
+            data.forEach(e => {
+                const lf = e.booked_seats / e.total_seats * 100;
+                const divEl = document.createElement('div');
+                divEl.classList.add('load-factor');
+                divEl.innerHTML = `<p> ${e.registration_number}: ${numForamat(lf)}%</p>`;
+                loadFactorDiv.appendChild(divEl);
+            });
+        })
+        .catch(error => {
+            console.error(`Error: ${error}`);
+        });
+}
 
+
+function numForamat(number) {
+    return parseInt(number.toString().slice(0, 2), 10);
+}
 
 
 // Generates the active flights //
